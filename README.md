@@ -138,7 +138,7 @@ mysql连接正常
 0、(2)成功导出 7 个用户帐号
 1、20180420 17:02:35 开始备份......
 2、备份以下数据库：
- homed_cmd homed_dtvs homed_iacs homed_icore homed_iepgs homed_ilog homed_imsgs homed_ipwed homed_isen homed_iuds homed_iusm homed_maintain homed_mosaicbms homed_svpp mysql ttt
+cmd  ttt
 3、20180420 17:04:04 备份成功......
 4、备份用时: 89 秒
 5、备份数据量大小: 256M
@@ -183,7 +183,7 @@ SET @@GLOBAL.GTID_PURGED='8a5dd931-42cc-11e8-aa39-0050569dc4ab:1-4,
 [root@node02 scripts]# cat /mybak/full/full_20180420/backup_full.log
 1、20180420 17:02:35 开始备份......
 2、备份以下数据库：
- homed_cmd homed_dtvs homed_iacs homed_icore homed_iepgs homed_ilog homed_imsgs homed_ipwed homed_isen homed_iuds homed_iusm homed_maintain homed_mosaicbms homed_svpp mysql ttt
+cmd  ttt
 3、20180420 17:04:04 备份成功......
 4、备份用时: 89 秒
 5、备份数据量大小: 256M
@@ -395,7 +395,7 @@ OLD_NUM : PUBLIC_POSITION 没有获取到数值,执行全备                    
 0、(2)成功导出 7 个用户帐号
 1、20180420 17:26:35 开始备份......
 2、备份以下数据库：
- homed_cmd homed_dtvs homed_iacs homed_icore homed_iepgs homed_ilog homed_imsgs homed_ipwed homed_isen homed_iuds homed_iusm homed_maintain homed_mosaicbms homed_svpp mysql ttt
+ cmd  ttt
 3、20180420 17:28:05 备份成功......
 4、备份用时: 90 秒
 5、备份数据量大小: 256M
