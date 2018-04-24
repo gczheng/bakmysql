@@ -12,11 +12,15 @@ mysqldump全量和增量备份，通过最近一次备份刷新产生binlog来�
   每周日执行一次全量备份，然后每天3点执行增量备份.
 
 * 应用场景：
+	
 	1）增量备份在周一到周六凌晨3点，会使用mysqlbinlog 导出sql并使用gzip压缩到指定目录；
+	
 		- mysqlbinlog -vv binlog.000044 binlog.000045 binlog.000046 ..... > |gzip > $INCR_BACKUP_DIR/incr.sql.gz
 	
 	2）全量备份则使用mysqldump将所有的数据库导出，每周日凌晨3点执行，并会删除N天之前的目录和文件。参数如下：
+
 		- MYSQLDUMP_OPTION=' --single-transaction --master-data=2 --flush-logs  --set-gtid-purged=AUTO --databases'
+		
 		- 删除命令(find $BASE_DIR  -mtime +$DELETE_DAYS  -type d -name "full*" -exec rm -rf {} \;)
 
 ### 2.使用方法
@@ -35,6 +39,7 @@ FILTER="information_schema|test|sys|performance_schema" --指定过滤的数据�
 ```
 
 备份基础目录以/mybak为例，目录的树形结构如下：
+
 ```bash
 [root@node02 scripts]# tree /mybak/
 /mybak/
@@ -143,7 +148,7 @@ mysql连接正常
 ```
 #### 3.2 全备执行结果
 
-```shell
+```bash
 [root@node02 scripts]# cat /mybak/public_position
 binlog.000051
 [root@node02 scripts]# cat /mybak/public_backup.log
@@ -192,7 +197,7 @@ full_bakcup_ok
 
 执行增量备份之前进行如下操作：
 
-```shell
+```bash
 [2018-04-20 15:32:17.838][192.168.49.247-node02][000220][MYSQL]
 UPDATE `ttt`.`t1` SET `name` = 'rrrrrssss' WHERE `id` = 3
 Time: 0.001s
@@ -208,7 +213,7 @@ Time: 0.001s
 
 执行中
 
-```shell
+```bash
 [root@node02 scripts]# ./bak_mysql_all.sh incr  2>/dev/null
 +------------------+
 | Backup_Host      |
