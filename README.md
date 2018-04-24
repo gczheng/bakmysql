@@ -12,9 +12,9 @@ mysqldump全量和增量备份，通过最近一次备份刷新产生binlog来�
   每周日执行一次全量备份，然后每天3点执行增量备份.
 
 * 应用场景：
-
 	1）增量备份在周一到周六凌晨3点，会使用mysqlbinlog 导出sql并使用gzip压缩到指定目录；
 		- mysqlbinlog -vv binlog.000044 binlog.000045 binlog.000046 ..... > |gzip > $INCR_BACKUP_DIR/incr.sql.gz
+	
 	2）全量备份则使用mysqldump将所有的数据库导出，每周日凌晨3点执行，并会删除N天之前的目录和文件。参数如下：
 		- MYSQLDUMP_OPTION=' --single-transaction --master-data=2 --flush-logs  --set-gtid-purged=AUTO --databases'
 		- 删除命令(find $BASE_DIR  -mtime +$DELETE_DAYS  -type d -name "full*" -exec rm -rf {} \;)
@@ -23,7 +23,7 @@ mysqldump全量和增量备份，通过最近一次备份刷新产生binlog来�
 
 脚本重点变量：
 
-```shell
+```bash
 MY_USER="gcdb"              --备份帐号
 MY_PASSWORD="iforgot"       --备份密码
 MY_IP="192.168.49.247"      --本机ip，例如从库ip
@@ -35,7 +35,7 @@ FILTER="information_schema|test|sys|performance_schema" --指定过滤的数据�
 ```
 
 备份基础目录以/mybak为例，目录的树形结构如下：
-```shell
+```bash
 [root@node02 scripts]# tree /mybak/
 /mybak/
 ├── full
@@ -76,7 +76,8 @@ FILTER="information_schema|test|sys|performance_schema" --指定过滤的数据�
 #### 2.1 全备
 
 * 备份命令
-  ./backup_mysql full
+	./backup_mysql full
+
 * 计划任务
 	crontab -e
 	#每天做一次全备，凌晨3点进行全量备份，备份频率可根据项目情况自行调整。
@@ -85,14 +86,16 @@ FILTER="information_schema|test|sys|performance_schema" --指定过滤的数据�
 #### 2.2 增量
 
 * 备份命令
-  ./backup_mysql incr
+	./backup_mysql incr
+
 * 计划任务
 	crontab -e
 	#每个小时(除3点外)进行binglog增量备份,备份频率可根据项目情况自行调整。
 	0 0-2,4-23 * * *  /bin/sh  /scripts/bak_mysql_all.sh incr  >/dev/null 2>&1
 
 参考如下：
-```shell
+
+```bash
 +-----------------------------------------------------------------------------+
 |Usage : ./backup_mysql  (full|incr)                                          |
 +-----------------------------------------------------------------------------+
@@ -111,7 +114,7 @@ FILTER="information_schema|test|sys|performance_schema" --指定过滤的数据�
 
 #### 3.1 全备执行过程
 
-```shell
+```bash
 [root@node02 scripts]# ./bak_mysql_all.sh full  2>/dev/null
 +------------------+
 | Backup_Host      |
@@ -226,7 +229,7 @@ mysqlbinlog 执行成功......
 
 #### 3.4 增备执行结果
 
-```shell
+```bash
 [root@node02 scripts]# ll /mybak/incr/incr_20180420171334
 total 20
 -rw-r--r-- 1 root root 2470 Apr 20 17:13 backup_incr.log
@@ -360,8 +363,8 @@ DELIMITER ;
 ```
 #### 3.5 public_position文件是空时，执行增备
 
-如果public_position文件是空的，就会从新执行全备
-```shell
+如果public_position文件是空的或者不存在，就会从新执行全备
+```bash
 [root@node02 scripts]# > /mybak/public_position    --清空文件
 
 [root@node02 scripts]# ./bak_mysql_all.sh incr 2>/dev/null
