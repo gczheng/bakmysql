@@ -1,7 +1,7 @@
 #!/bin/bash
 # line:           V1.0
 # mail:           gczheng@139.com
-# data:           2018-04-17
+# data:           2018-04-25
 # script_name:    bak_mysql_all.sh
 # database_host:  192.168.49.246
 # crontab:        30 0 * * *  /bin/sh  /scripts/bak_mysql.sh full >/dev/null 2>&1
@@ -21,17 +21,16 @@ DATE2=`date "+%Y%m%d%H%M%S"`
 #=======================================================================
 MY_USER="gcdb"
 MY_PASSWORD="iforgot"
-MY_IP="192.168.49.247"
-MY_MASTER_IP="192.168.49.246"
+MY_IP="192.168.49.245"
+
+MY_MASTER_USER="root"
+MY_MASTER_PASSWORD=""
+MY_MASTER_IP="192.168.101.137"
 
 #=======================================================================
-#mysql和mysqldump相关选项
+#备份保存天数，即删除N天之前的备份
 #=======================================================================
-
-MYSQL_CONN_OPTION=" -u$MY_USER -p$MY_PASSWORD -h$MY_IP"
-MYSQLDUMP_OPTION=" --single-transaction --master-data=2 --flush-logs  --set-gtid-purged=AUTO --databases"
-MYSQL_MASTER_CONN_OPTION=" -u$MY_USER -p$MY_PASSWORD -h$MY_MASTER_IP"
-FILTER="information_schema|test|sys|performance_schema"
+DELETE_DAYS=7
 
 #=======================================================================
 #binlog目录
@@ -46,10 +45,15 @@ FULL_BASE_DIR=${BASE_DIR}/full
 INCR_BASE_DIR=${BASE_DIR}/incr
 FULL_BACKUP_DIR=${FULL_BASE_DIR}/full_${DATE}
 INCR_BACKUP_DIR=${INCR_BASE_DIR}/incr_${DATE2}
+
 #=======================================================================
-#备份保存天数，即删除N天之前的备份
+#mysql和mysqldump相关选项
 #=======================================================================
-DELETE_DAYS=7
+
+MYSQL_CONN_OPTION=" -u$MY_USER -p$MY_PASSWORD -h$MY_IP"
+MYSQLDUMP_OPTION=" --single-transaction --master-data=2 --flush-logs -E -R --databases"
+FILTER="information_schema|test|sys|performance_schema"
+MYSQL_MASTER_CONN_OPTION=" -u$MY_MASTER_USER -p$MY_MASTER_PASSWORD -h$MY_MASTER_IP"
 
 #=======================================================================
 #日志文件
@@ -58,6 +62,20 @@ PUBLIC_LOG=$BASE_DIR/public_backup.log
 PUBLIC_POSITION=$BASE_DIR/public_position
 FULL_LOG=$FULL_BACKUP_DIR/backup_full.log
 INCR_LOG=$INCR_BACKUP_DIR/backup_incr.log
+SCHEMA_NAME_FILE=$FULL_BACKUP_DIR/dbname
+#=======================================================================
+#判断帐号和IP是否异常
+#=======================================================================
+
+mysql $MYSQL_CONN_OPTION  -e 'select @@hostname as  Backup_Host;'
+if [ "$?" -ne 0 ];then
+    echo -e "Backup_Host连接异常,请检查帐号密码和主机名/IP......"  >$PUBLIC_LOG
+    echo -e "Backup_Host连接异常,请检查帐号密码和主机名/IP......"
+    exit 1
+  else
+    echo -e "Backup_Host 连接正常"
+    echo -e "Backup_Host 连接正常" >$PUBLIC_LOG
+fi
 
 #=======================================================================
 #创建备份目录
@@ -68,19 +86,6 @@ if [ ! -d "${BASE_DIR}" ];then
         echo $BASE_DIR && cd $BASE_DIR
 fi
 
-#=======================================================================
-#判断帐号和IP是否异常
-#=======================================================================
-
-mysql $MYSQL_CONN_OPTION  -e 'select @@hostname as  Backup_Host;'
-if [ "$?" -ne 0 ];then
-    echo -e "mysql连接异常,请检查帐号密码和主机名/IP......"  >$PUBLIC_LOG
-    echo -e "mysql连接异常,请检查帐号密码和主机名/IP......"
-    exit 1
-  else
-  echo -e "mysql连接正常"  >$PUBLIC_LOG
-  echo -e "mysql连接正常"
-fi
 #=======================================================================
 #MySQL备份（函数）
 #=======================================================================
@@ -117,6 +122,16 @@ function backup(){
         DATA=`du -sh $FULL_BACKUP_DIR |awk '{print $1}'`
         echo "5、备份数据量大小: $DATA " >> $FULL_LOG
         echo "5、备份数据量大小: $DATA "
+        # 获取GTID和postion点
+        sleep 5s
+        gunzip <$FULL_BACKUP_DIR/fullbak.sql.gz |sed -n '1,50p'| grep -E "MASTER|GTID" > $FULL_BACKUP_DIR/position
+        # 写入最后的binlog名到公共文件中
+        cat $FULL_BACKUP_DIR/position |grep -iwE MASTER_LOG_FILE |awk -F "'" '{print $2}' > $PUBLIC_POSITION
+
+        #记录最新的binlog文件名
+        echo "6、记录最新的binlog文件名!" >> $FULL_LOG
+        echo "6、记录最新的binlog文件名!"
+        cat $PUBLIC_POSITION >> $FULL_LOG
 }
 #=======================================================================
 # 导出用户权限设置 （函数）
@@ -144,55 +159,174 @@ function exp_master_users(){
     mysql $MYSQL_MASTER_CONN_OPTION -B -N $@ -e "SELECT CONCAT('SHOW CREATE USER ''', user, '''@''', host, ''';') AS query FROM mysql.user" | mysql $MYSQL_MASTER_CONN_OPTION $@ | sed 's/\(CREATE .*\)/\1;/;s/^\(CREATE USER for .*\)/-- \1 /;/--/{x;p;x;}'
 }
 
+
 #=======================================================================
-# 执行导出master用户帐号和权限信息
+# 全备导出用户帐号和权限信息
+#=======================================================================
+function exp_user_info()
+{
+
+mysql $MYSQL_CONN_OPTION  -e 'select @@hostname as MY_Host;'
+if [ $? -eq 0 ];then
+     echo -e "$MY_IP开始导出帐号和权限信息" >>$FULL_LOG
+     echo -e "$MY_IP开始导出帐号和权限信息"
+    VERSTON=`mysql $MYSQL_CONN_OPTION  -Bse "select @@version" |cut -b 1-3`
+    if [ $VERSTON = "5.7" ];then
+        exp_grants > $FULL_BACKUP_DIR/grants.sql
+        GRANTS=`grep -iwE "Grants" $FULL_BACKUP_DIR/grants.sql |wc -l`
+        if [ $GRANTS -gt 0 ];then
+          echo -e "$MY_IP成功导出 $GRANTS 个用户权限" >>$FULL_LOG
+          echo -e "$MY_IP成功导出 $GRANTS 个用户权限"
+        else
+          echo -e "$MY_IP导出用户帐号异常结束."  >>$FULL_LOG
+          echo -e "$MY_IP导出用户帐号异常结束."
+          echo -e "$MY_IP请检查帐号权限."  >>$FULL_LOG
+          echo -e "$MY_IP请检查帐号权限."
+          return 1
+        fi
+        exp_users > $FULL_BACKUP_DIR/users.sql
+        USERS=`grep -iwE "IDENTIFIED" $FULL_BACKUP_DIR/users.sql |wc -l`
+        if [ $USERS -gt 0 ];then
+          echo -e "$MY_IP成功导出 $USERS 个用户帐号" >>$FULL_LOG
+          echo -e "$MY_IP成功导出 $USERS 个用户帐号"
+        else
+          echo -e "$MY_IP导出用户帐号异常结束."  >>$FULL_LOG
+          echo -e "$MY_IP导出用户帐号异常结束."
+          echo -e "$MY_IP请检查帐号权限."  >>$FULL_LOG
+          echo -e "$MY_IP请检查帐号权限."
+          return 1
+        fi
+    else
+        exp_grants > $FULL_BACKUP_DIR/grants.sql
+        GRANTS=`grep -iwE "Grants" $FULL_BACKUP_DIR/grants.sql |wc -l`
+        if [ $GRANTS -gt 0 ];then
+          echo -e "$MY_IP成功导出 $GRANTS 个用户权限" >>$FULL_LOG
+          echo -e "$MY_IP成功导出 $GRANTS 个用户权限"
+        else
+          echo -e "$MY_IP导出用户帐号异常结束."  >>$FULL_LOG
+          echo -e "$MY_IP导出用户帐号异常结束."
+          echo -e "$MY_IP请检查帐号权限."  >>$FULL_LOG
+          echo -e "$MY_IP请检查帐号权限."
+          return 1
+        fi
+    fi
+else
+    echo -e "$MY_IP连接异常,请检查帐号密码和主机名/IP......"  >>$FULL_LOG
+    echo -e "$MY_IP连接异常,请检查帐号密码和主机名/IP......"
+    return 1
+fi
+}
+#=======================================================================
+# 全备导出master用户帐号和权限信息
 #=======================================================================
 
-function run_exp_master_user_info()
+function exp_master_user_info()
 {
-echo -e "开始导出master帐号和权限信息" >>$FULL_LOG
-echo -e "开始导出master帐号和权限信息"
 mysql $MYSQL_MASTER_CONN_OPTION  -e 'select @@hostname as Master_Host;'
 if [ $? -eq 0 ];then
+     echo -e "master $MY_MASTER_IP开始导出帐号和权限信息" >>$FULL_LOG
+     echo -e "master $MY_MASTER_IP开始导出帐号和权限信息"
     VERSTON=`mysql $MYSQL_MASTER_CONN_OPTION  -Bse "select @@version" |cut -b 1-3`
     if [ $VERSTON = "5.7" ];then
         exp_master_grants > $FULL_BACKUP_DIR/master_grants.sql
         GRANTS=`grep -iwE "Grants" $FULL_BACKUP_DIR/master_grants.sql |wc -l`
-        if [ $GRANTS -ge 0 ];then
-          echo -e "0、(1)master成功导出 $GRANTS 个用户权限" >>$FULL_LOG
-          echo -e "0、(1)master成功导出 $GRANTS 个用户权限"
+        if [ $GRANTS -gt 0 ];then
+          echo -e "master $MY_MASTER_IP成功导出 $GRANTS 个用户权限" >>$FULL_LOG
+          echo -e "master $MY_MASTER_IP成功导出 $GRANTS 个用户权限"
         else
-          echo -e "master导出用户帐号异常结束."  >>$FULL_LOG
-          echo -e "master导出用户帐号异常结束."
-          return
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."  >>$FULL_LOG
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."
+          echo -e "master $MY_MASTER_IP请检查帐号权限."  >>$FULL_LOG
+          echo -e "master $MY_MASTER_IP请检查帐号权限."
+          return 
         fi
         exp_master_users > $FULL_BACKUP_DIR/master_users.sql
         USERS=`grep -iwE "IDENTIFIED" $FULL_BACKUP_DIR/master_users.sql |wc -l`
-        if [ $USERS -ge 0 ];then
-          echo -e "0、(2)master成功导出 $USERS 个用户帐号" >>$FULL_LOG
-          echo -e "0、(2)master成功导出 $USERS 个用户帐号"
+        if [ $USERS -gt 0 ];then
+          echo -e "master $MY_MASTER_IP成功导出 $USERS 个用户帐号" >>$FULL_LOG
+          echo -e "master $MY_MASTER_IP成功导出 $USERS 个用户帐号"
         else
-          echo -e "master导出用户帐号异常结束."  >>$FULL_LOG
-          echo -e "master导出用户帐号异常结束."
-          return
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."  >>$FULL_LOG
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."
+          echo -e "master $MY_MASTER_IP请检查帐号权限."  >>$FULL_LOG
+          echo -e "master $MY_MASTER_IP请检查帐号权限."
+          return 
         fi
     else
         exp_master_grants > $FULL_BACKUP_DIR/master_grants.sql
         GRANTS=`grep -iwE "Grants" $FULL_BACKUP_DIR/master_grants.sql |wc -l`
-        if [ $GRANTS -ge 0 ];then
-          echo -e "0、(1)master成功导出 $GRANTS 个用户权限" >>$FULL_LOG
-          echo -e "0、(1)master成功导出 $GRANTS 个用户权限"
+        if [ $GRANTS -gt 0 ];then
+          echo -e "master $MY_MASTER_IP成功导出 $GRANTS 个用户权限" >>$FULL_LOG
+          echo -e "master $MY_MASTER_IP成功导出 $GRANTS 个用户权限"
         else
-          echo -e "master导出用户帐号异常结束."  >>$FULL_LOG
-          echo -e "master导出用户帐号异常结束."
-          return
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."  >>$FULL_LOG
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."
+          echo -e "master $MY_MASTER_IP请检查帐号权限."  >>$FULL_LOG
+          echo -e "master $MY_MASTER_IP请检查帐号权限."
+          return 
         fi
     fi
 else
-    echo -e "master导出用户帐号和权限失败......">>$FULL_LOG
-    echo -e "master导出用户帐号和权限失败......"
-    echo -e "master连接异常,请检查帐号密码和主机名/IP......"  >>$FULL_LOG
-    echo -e "master连接异常,请检查帐号密码和主机名/IP......"
+    echo -e "master $MY_MASTER_IP连接异常,请检查帐号密码和主机名/IP......"  >>$FULL_LOG
+    echo -e "master $MY_MASTER_IP连接异常,请检查帐号密码和主机名/IP......"
+    return 
+fi
+}
+
+#=======================================================================
+# 只导出master用户帐号和权限信息
+#=======================================================================
+
+function only_exp_master_user()
+{
+mysql $MYSQL_MASTER_CONN_OPTION  -e 'select @@hostname as Master_Host;'
+if [ $? -eq 0 ];then
+     echo -e "master $MY_MASTER_IP开始导出帐号和权限信息" >>$PUBLIC_LOG
+     echo -e "master $MY_MASTER_IP开始导出帐号和权限信息"
+    VERSTON=`mysql $MYSQL_MASTER_CONN_OPTION  -Bse "select @@version" |cut -b 1-3`
+    if [ $VERSTON = "5.7" ];then
+        exp_master_grants > $BASE_DIR/master_grants.sql
+        GRANTS=`grep -iwE "Grants" $BASE_DIR/master_grants.sql |wc -l`
+        if [ $GRANTS -gt 0 ];then
+          echo -e "master $MY_MASTER_IP成功导出 $GRANTS 个用户权限" >>$PUBLIC_LOG
+          echo -e "master $MY_MASTER_IP成功导出 $GRANTS 个用户权限"
+        else
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."  >>$PUBLIC_LOG
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."
+          echo -e "master $MY_MASTER_IP请检查帐号权限."  >>$PUBLIC_LOG
+          echo -e "master $MY_MASTER_IP请检查帐号权限."
+          return 1
+        fi
+        exp_master_users > $BASE_DIR/master_users.sql
+        USERS=`grep -iwE "IDENTIFIED" $BASE_DIR/master_users.sql |wc -l`
+        if [ $USERS -gt 0 ];then
+          echo -e "master $MY_MASTER_IP成功导出 $USERS 个用户帐号" >>$PUBLIC_LOG
+          echo -e "master $MY_MASTER_IP成功导出 $USERS 个用户帐号"
+        else
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."  >>$PUBLIC_LOG
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."
+          echo -e "master $MY_MASTER_IP请检查帐号权限."  >>$PUBLIC_LOG
+          echo -e "master $MY_MASTER_IP请检查帐号权限."
+          return 1
+        fi
+    else
+        exp_master_grants > $BASE_DIR/master_grants.sql
+        GRANTS=`grep -iwE "Grants" $BASE_DIR/master_grants.sql |wc -l`
+        if [ $GRANTS -gt 0 ];then
+          echo -e "master $MY_MASTER_IP成功导出 $GRANTS 个用户权限" >>$PUBLIC_LOG
+          echo -e "master $MY_MASTER_IP成功导出 $GRANTS 个用户权限"
+        else
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."  >>$PUBLIC_LOG
+          echo -e "master $MY_MASTER_IP导出用户帐号异常结束."
+          echo -e "master $MY_MASTER_IP请检查帐号权限."  >>$PUBLIC_LOG
+          echo -e "master $MY_MASTER_IP请检查帐号权限."
+          return 1
+        fi
+    fi
+else
+    echo -e "master $MY_MASTER_IP连接异常,请检查帐号密码和主机名/IP......"  >>$PUBLIC_LOG
+    echo -e "master $MY_MASTER_IP连接异常,请检查帐号密码和主机名/IP......"
+    return 1
 fi
 }
 
@@ -214,59 +348,13 @@ if [ ! -f "$FULL_LOG" ]; then
         touch "$INCR_LOG"
 fi
 
-SCHEMA_NAME_FILE=$FULL_BACKUP_DIR/dbname
-VERSTON=`mysql $MYSQL_CONN_OPTION  -Bse "select @@version" |cut -b 1-3`
-if [ $VERSTON = "5.7" ];then
-    exp_grants > $FULL_BACKUP_DIR/grants.sql
-    GRANTS=`grep -iwE "Grants" $FULL_BACKUP_DIR/grants.sql |wc -l`
-    if [ $GRANTS -ge 0 ];then
-      echo -e "0、(1)成功导出 $GRANTS 个用户权限" >>$FULL_LOG
-      echo -e "0、(1)成功导出 $GRANTS 个用户权限"
-    else
-      echo -e "导出用户帐号异常结束."  >>$FULL_LOG
-      echo -e "导出用户帐号异常结束."
-      return
-    fi
-    exp_users > $FULL_BACKUP_DIR/users.sql
-    USERS=`grep -iwE "IDENTIFIED" $FULL_BACKUP_DIR/users.sql |wc -l`
-    if [ $USERS -ge 0 ];then
-      echo -e "0、(2)成功导出 $USERS 个用户帐号" >>$FULL_LOG
-      echo -e "0、(2)成功导出 $USERS 个用户帐号"
-    else
-      echo -e "导出用户帐号异常结束."  >>$FULL_LOG
-      echo -e "导出用户帐号异常结束."
-      return
-    fi
-  #执行备份
-    backup
-else
-    exp_grants > $FULL_BACKUP_DIR/grants.sql
-    GRANTS=`grep -iwE "Grants" $FULL_BACKUP_DIR/grants.sql |wc -l`
-    if [ $GRANTS -ge 0 ];then
-      echo -e "0、成功导出 $GRANTS 个用户帐号和权限" >>$FULL_LOG
-      echo -e "0、成功导出 $GRANTS 个用户帐号和权限"
-    else
-      echo -e "导出用户帐号异常结束."  >>$FULL_LOG
-      echo -e "导出用户帐号异常结束."
-      return
-    fi
-  #执行备份
-    backup
-fi
 
-# 获取GTID和postion点
-sleep 5s
-gunzip <$FULL_BACKUP_DIR/fullbak.sql.gz |sed -n '1,50p'| grep -E "MASTER|GTID" > $FULL_BACKUP_DIR/position
-# 写入最后的binlog名到公共文件中
-cat $FULL_BACKUP_DIR/position |grep -iwE MASTER_LOG_FILE |awk -F "'" '{print $2}' > $PUBLIC_POSITION
-
-#记录最新的binlog文件名
-echo "6、记录最新的binlog文件名!" >> $FULL_LOG
-echo "6、记录最新的binlog文件名!"
-cat $PUBLIC_POSITION >> $FULL_LOG
-
+#导出本机帐号信息
+exp_user_info
+#执行备份
+backup
 #导出master帐号信息
-run_exp_master_user_info
+exp_master_user_info
 }
 
 #=======================================================================
@@ -283,15 +371,15 @@ if [ ! -d "${INCR_BACKUP_DIR}" ];then
 fi
 
 if [ ! -f "$INCR_LOG" ]; then
-        echo -e "$INCR_LOG 不存在，重新创建. "
-        echo -e "$INCR_LOG 不存在，重新创建. " >> $PUBLIC_LOG
+        echo -e "创建 $INCR_LOG "
+        echo -e "创建 $INCR_LOG " >> $PUBLIC_LOG
         touch "$INCR_LOG"
 fi
 
 if [ ! -d $BINLOG_FILE ]; then
-    echo -e "$BINLOG_FILE 不存在，请配置正确的目录. "
-    echo -e "$BINLOG_FILE 不存在，请配置正确的目录. " >> $INCR_LOG
-    exit 
+    echo -e "$BINLOG_FILE 不存在，请配置正确的路径. "
+    echo -e "$BINLOG_FILE 不存在，请配置正确的路径. " >> $INCR_LOG
+    exit
 fi
 
 OLD_BINLOGS=$INCR_BACKUP_DIR/old_binlogs_list
@@ -329,7 +417,7 @@ else
    echo "OLD_NUM : PUBLIC_POSITION 没有获取到数值,执行全备"
    echo "OLD_NUM : PUBLIC_POSITION 没有获取到数值,执行全备" >>$PUBLIC_LOG
    main_full_backup
-   echo "全备执行成功" 
+   echo "全备执行成功"
    echo "全备执行成功" >> $PUBLIC_LOG
    #跳回函数run下面的incr BACKUP_OK
    return 1
@@ -350,10 +438,10 @@ do
     fi
 done
 if [ $? -eq 0 ];then
-  echo -e "for循环执行成功"
+  echo -e "循环写入binlog名执行成功"
 else
-  echo -e "for循环执行异常，退出增量备份"  >> $INCR_LOG
-  echo -e "for循环执行异常，退出增量备份"
+  echo -e "循环写入binlog名异常，退出增量备份"  >> $INCR_LOG
+  echo -e "循环写入binlog名异常，退出增量备份"
   return 1
 fi
 
@@ -397,10 +485,11 @@ fi
 function usage()
 {
 echo "+-----------------------------------------------------------------------------+"
-echo "|Usage : ./backup_mysql  (full|incr)                                          |"
+echo "|Usage : ./bak_mysql.sh  (full|incr|oemu)                                     |"
 echo "+-----------------------------------------------------------------------------+"
-echo "|全备  ：./backup_mysql full                                                  |"
-echo "|增量  ：./backup_mysql incr                                                  |"
+echo "|全备              ：./bak_mysql.sh full                                      |"
+echo "|增量              ：./bak_mysql.sh incr                                      |"
+echo "|只导出master权限  ：./bak_mysql.sh oemu                                      |"
 echo "+-----------------------------------------------------------------------------+"
 echo "计划任务参考"
 echo "+-----------------------------------------------------------------------------+"
@@ -429,7 +518,7 @@ case $BACKUP_TYPE in
       # 删除N天之前的数据
       find $FULL_BASE_DIR  -mtime +$DELETE_DAYS  -type d -name "full*" -exec rm -rf {} \;
       echo "删除 $FULL_BASE_DIR 目录下 $DELETE_DAYS 天之前的备份!" >> $PUBLIC_LOG
-      echo "删除 $FULL_BASE_DIR 目录下 $DELETE_DAYS 天之前的备份!" >> $PUBLIC_LOG
+      echo "删除 $FULL_BASE_DIR 目录下 $DELETE_DAYS 天之前的备份!" 
       echo "full_bakcup_ok" >> $PUBLIC_LOG
     else
       # 全备失败
@@ -465,6 +554,21 @@ case $BACKUP_TYPE in
         echo -e "增量失败,删除备份目录"  >> $PUBLIC_LOG
         echo -e "增量失败,删除备份目录"
       fi
+    fi
+    ;;
+
+  oemu)
+    #导出master帐号信息
+    only_exp_master_user
+    BACKUP_OK=$?
+    if [ 0 -eq "$BACKUP_OK" ]; then
+      # master用户帐号和权限备份成功
+      echo -e "master $MY_MASTER_IP导出用户帐号和权限成功"  >> $PUBLIC_LOG
+      echo -e "master $MY_MASTER_IP导出用户帐号和权限成功"
+    else
+      # master用户帐号和权限备份失败
+      echo -e "master $MY_MASTER_IP导出用户帐号和权限失败"  >> $PUBLIC_LOG
+      echo -e "master $MY_MASTER_IP导出用户帐号和权限失败"
     fi
     ;;
  *)
