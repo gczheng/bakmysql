@@ -44,8 +44,8 @@ MY_MASTER_PASSWORD="iforgot"        --master密码
 MY_MASTER_IP="192.168.49.246"       --指主库ip
 BINLOG_FILE=/r2/mysqldata           --binlog文件所在的目录,增量时需要用到
 BASE_DIR=/mybak                     --备份基础目录
-DELETE_DAYS=15                       --备份保存天数，即删除N天之前的备份，例如一周一个全备、每一天一个增量，该值必须大于配置为7，
-FILTER="information_schema|test|sys|performance_schema" --过滤指定数据库，也就是不备份的数据库
+DELETE_DAYS=15                      --备份保存天数，即删除N天之前的备份，例如一周一个全备、每一天一个增量，该值必须大于配置为7，
+FILTER="information_schema|test|mysql|sys|performance_schema" --过滤指定数据库，也就是不备份的数据库（注意mysql库）
 ```
 
 * 备份基础目录以/mybak为例，目录的树形结构如下：

@@ -52,7 +52,7 @@ INCR_BACKUP_DIR=${INCR_BASE_DIR}/incr_${DATE2}
 
 MYSQL_CONN_OPTION=" -u$MY_USER -p$MY_PASSWORD -h$MY_IP"
 MYSQLDUMP_OPTION=" --single-transaction --master-data=2 --flush-logs -E -R --databases"
-FILTER="information_schema|test|sys|performance_schema"
+FILTER="information_schema|test|mysql|sys|performance_schema"
 MYSQL_MASTER_CONN_OPTION=" -u$MY_MASTER_USER -p$MY_MASTER_PASSWORD -h$MY_MASTER_IP"
 
 #=======================================================================
