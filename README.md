@@ -22,14 +22,14 @@ mysqldump全量和增量备份，通过最近一次备份刷新产生binlog来�
 * 应用场景：
 
     - 增量备份在周一到周六凌晨3点，会使用mysqlbinlog 导出sql并使用gzip压缩到指定目录
-	
+
         - mysqlbinlog -vv binlog.000044 binlog.000045 binlog.000046 ..... > |gzip > $INCR_BACKUP_DIR/incr.sql.gz
-	
+
     - 全量备份则使用mysqldump将所有的数据库导出，每周日凌晨3点执行，并会删除N天之前的目录和文件。参数如下：
-	
-    	- MYSQLDUMP_OPTION=' --single-transaction --master-data=2 -E -R --flush-logs  --databases'
-	- 删除命令
-		- (`find $BASE_DIR  -mtime + $DELETE_DAYS  -type d -name "full*" -exec rm -rf {} \;`)
+
+      - MYSQLDUMP_OPTION=' --add-drop-table --single-transaction --master-data=2 -E -R --flush-logs --databases'
+    - 删除命令
+      - (`find $BASE_DIR  -mtime + $DELETE_DAYS  -type d -name "full*" -exec rm -rf {} \;`)
 
 ### 2.使用方法
 
