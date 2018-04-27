@@ -24,7 +24,7 @@ MY_PASSWORD="iforgot"
 MY_IP="192.168.49.245"
 
 MY_MASTER_USER="root"
-MY_MASTER_PASSWORD=""
+MY_MASTER_PASSWORD="iforgot"
 MY_MASTER_IP="192.168.101.137"
 
 #=======================================================================
